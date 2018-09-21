@@ -46,6 +46,17 @@ class FieldTest(MongoDBTestCase):
         md = MyDoc(dt='')
         self.assertRaises(ValidationError, md.save)
 
+    def test_date_from_empty_string(self):
+        """
+        Ensure an exception is raised when trying to
+        cast an empty string to datetime.
+        """
+        class MyDoc(Document):
+            dt = DateField()
+
+        md = MyDoc(dt='')
+        self.assertRaises(ValidationError, md.save)
+
     def test_datetime_from_whitespace_string(self):
         """
         Ensure an exception is raised when trying to
@@ -53,6 +64,17 @@ class FieldTest(MongoDBTestCase):
         """
         class MyDoc(Document):
             dt = DateTimeField()
+
+        md = MyDoc(dt='   ')
+        self.assertRaises(ValidationError, md.save)
+
+    def test_date_from_whitespace_string(self):
+        """
+        Ensure an exception is raised when trying to
+        cast a whitespace-only string to datetime.
+        """
+        class MyDoc(Document):
+            dt = DateField()
 
         md = MyDoc(dt='   ')
         self.assertRaises(ValidationError, md.save)
@@ -66,13 +88,14 @@ class FieldTest(MongoDBTestCase):
             age = IntField(default=30, required=False)
             userid = StringField(default=lambda: 'test', required=True)
             created = DateTimeField(default=datetime.datetime.utcnow)
+            day = DateField(default=datetime.date.today)
 
         person = Person(name="Ross")
 
         # Confirm saving now would store values
         data_to_be_saved = sorted(person.to_mongo().keys())
         self.assertEqual(data_to_be_saved,
-            ['age', 'created', 'name', 'userid']
+            ['age', 'created', 'day', 'name', 'userid']
         )
 
         self.assertTrue(person.validate() is None)
@@ -81,16 +104,18 @@ class FieldTest(MongoDBTestCase):
         self.assertEqual(person.age, person.age)
         self.assertEqual(person.userid, person.userid)
         self.assertEqual(person.created, person.created)
+        self.assertEqual(person.day, person.day)
 
         self.assertEqual(person._data['name'], person.name)
         self.assertEqual(person._data['age'], person.age)
         self.assertEqual(person._data['userid'], person.userid)
         self.assertEqual(person._data['created'], person.created)
+        self.assertEqual(person._data['day'], person.day)
 
         # Confirm introspection changes nothing
         data_to_be_saved = sorted(person.to_mongo().keys())
         self.assertEqual(
-            data_to_be_saved, ['age', 'created', 'name', 'userid'])
+            data_to_be_saved, ['age', 'created', 'day', 'name', 'userid'])
 
     def test_default_values_set_to_None(self):
         """Ensure that default field values are used even when
@@ -150,7 +175,7 @@ class FieldTest(MongoDBTestCase):
         self.assertEqual(person.name, None)
         self.assertEqual(person.age, 30)
         self.assertEqual(person.userid, 'test')
-        self.assertTrue(isinstance(person.created, datetime.datetime))
+        self.assertIsInstance(person.created, datetime.datetime)
 
         self.assertEqual(person._data['name'], person.name)
         self.assertEqual(person._data['age'], person.age)
@@ -186,7 +211,7 @@ class FieldTest(MongoDBTestCase):
         self.assertEqual(person.name, None)
         self.assertEqual(person.age, 30)
         self.assertEqual(person.userid, 'test')
-        self.assertTrue(isinstance(person.created, datetime.datetime))
+        self.assertIsInstance(person.created, datetime.datetime)
         self.assertNotEqual(person.created, datetime.datetime(2014, 6, 12))
 
         self.assertEqual(person._data['name'], person.name)
@@ -239,12 +264,11 @@ class FieldTest(MongoDBTestCase):
 
         # Retrive data from db and verify it.
         ret = HandleNoneFields.objects.all()[0]
-        self.assertEqual(ret.str_fld, None)
-        self.assertEqual(ret.int_fld, None)
-        self.assertEqual(ret.flt_fld, None)
+        self.assertIsNone(ret.str_fld)
+        self.assertIsNone(ret.int_fld)
+        self.assertIsNone(ret.flt_fld)
 
-        # Return current time if retrived value is None.
-        self.assertTrue(isinstance(ret.comp_dt_fld, datetime.datetime))
+        self.assertIsNone(ret.comp_dt_fld)
 
     def test_not_required_handles_none_from_database(self):
         """Ensure that every field can handle null values from the
@@ -262,7 +286,7 @@ class FieldTest(MongoDBTestCase):
         doc.str_fld = u'spam ham egg'
         doc.int_fld = 42
         doc.flt_fld = 4.2
-        doc.com_dt_fld = datetime.datetime.utcnow()
+        doc.comp_dt_fld = datetime.datetime.utcnow()
         doc.save()
 
         # Unset all the fields
@@ -277,12 +301,10 @@ class FieldTest(MongoDBTestCase):
 
         # Retrive data from db and verify it.
         ret = HandleNoneFields.objects.first()
-        self.assertEqual(ret.str_fld, None)
-        self.assertEqual(ret.int_fld, None)
-        self.assertEqual(ret.flt_fld, None)
-
-        # ComplexDateTimeField returns current time if retrived value is None.
-        self.assertTrue(isinstance(ret.comp_dt_fld, datetime.datetime))
+        self.assertIsNone(ret.str_fld)
+        self.assertIsNone(ret.int_fld)
+        self.assertIsNone(ret.flt_fld)
+        self.assertIsNone(ret.comp_dt_fld)
 
         # Retrieved object shouldn't pass validation when a re-save is
         # attempted.
@@ -402,6 +424,16 @@ class FieldTest(MongoDBTestCase):
         scheme_link = SchemeLink()
         scheme_link.url = 'ws://google.com'
         scheme_link.validate()
+
+    def test_url_allowed_domains(self):
+        """Allow underscore in domain names.
+        """
+        class Link(Document):
+            url = URLField()
+
+        link = Link()
+        link.url = 'https://san_leandro-ca.geebo.com'
+        link.validate()
 
     def test_int_validation(self):
         """Ensure that invalid values cannot be assigned to int fields.
@@ -662,6 +694,32 @@ class FieldTest(MongoDBTestCase):
         log.time = 'ABC'
         self.assertRaises(ValidationError, log.validate)
 
+    def test_date_validation(self):
+        """Ensure that invalid values cannot be assigned to datetime
+        fields.
+        """
+        class LogEntry(Document):
+            time = DateField()
+
+        log = LogEntry()
+        log.time = datetime.datetime.now()
+        log.validate()
+
+        log.time = datetime.date.today()
+        log.validate()
+
+        log.time = datetime.datetime.now().isoformat(' ')
+        log.validate()
+
+        if dateutil:
+            log.time = datetime.datetime.now().isoformat('T')
+            log.validate()
+
+        log.time = -1
+        self.assertRaises(ValidationError, log.validate)
+        log.time = 'ABC'
+        self.assertRaises(ValidationError, log.validate)
+
     def test_datetime_tz_aware_mark_as_changed(self):
         from mongoengine import connection
 
@@ -733,6 +791,51 @@ class FieldTest(MongoDBTestCase):
             self.assertNotEqual(log.date, d1)
             self.assertEqual(log.date, d2)
 
+    def test_date(self):
+        """Tests showing pymongo date fields
+
+        See: http://api.mongodb.org/python/current/api/bson/son.html#dt
+        """
+        class LogEntry(Document):
+            date = DateField()
+
+        LogEntry.drop_collection()
+
+        # Test can save dates
+        log = LogEntry()
+        log.date = datetime.date.today()
+        log.save()
+        log.reload()
+        self.assertEqual(log.date, datetime.date.today())
+
+        d1 = datetime.datetime(1970, 1, 1, 0, 0, 1, 999)
+        d2 = datetime.datetime(1970, 1, 1, 0, 0, 1)
+        log = LogEntry()
+        log.date = d1
+        log.save()
+        log.reload()
+        self.assertEqual(log.date, d1.date())
+        self.assertEqual(log.date, d2.date())
+
+        d1 = datetime.datetime(1970, 1, 1, 0, 0, 1, 9999)
+        d2 = datetime.datetime(1970, 1, 1, 0, 0, 1, 9000)
+        log.date = d1
+        log.save()
+        log.reload()
+        self.assertEqual(log.date, d1.date())
+        self.assertEqual(log.date, d2.date())
+
+        if not six.PY3:
+            # Pre UTC dates microseconds below 1000 are dropped
+            # This does not seem to be true in PY3
+            d1 = datetime.datetime(1969, 12, 31, 23, 59, 59, 999)
+            d2 = datetime.datetime(1969, 12, 31, 23, 59, 59)
+            log.date = d1
+            log.save()
+            log.reload()
+            self.assertEqual(log.date, d1.date())
+            self.assertEqual(log.date, d2.date())
+
     def test_datetime_usage(self):
         """Tests for regular datetime fields"""
         class LogEntry(Document):
@@ -787,136 +890,50 @@ class FieldTest(MongoDBTestCase):
         )
         self.assertEqual(logs.count(), 5)
 
-    def test_complexdatetime_storage(self):
-        """Tests for complex datetime fields - which can handle
-        microseconds without rounding.
-        """
+    def test_date_usage(self):
+        """Tests for regular datetime fields"""
         class LogEntry(Document):
-            date = ComplexDateTimeField()
-            date_with_dots = ComplexDateTimeField(separator='.')
+            date = DateField()
 
         LogEntry.drop_collection()
 
-        # Post UTC - microseconds are rounded (down) nearest millisecond and
-        # dropped - with default datetimefields
-        d1 = datetime.datetime(1970, 1, 1, 0, 0, 1, 999)
+        d1 = datetime.datetime(1970, 1, 1, 0, 0, 1)
         log = LogEntry()
         log.date = d1
+        log.validate()
         log.save()
-        log.reload()
-        self.assertEqual(log.date, d1)
 
-        # Post UTC - microseconds are rounded (down) nearest millisecond - with
-        # default datetimefields
-        d1 = datetime.datetime(1970, 1, 1, 0, 0, 1, 9999)
-        log.date = d1
-        log.save()
-        log.reload()
-        self.assertEqual(log.date, d1)
-
-        # Pre UTC dates microseconds below 1000 are dropped - with default
-        # datetimefields
-        d1 = datetime.datetime(1969, 12, 31, 23, 59, 59, 999)
-        log.date = d1
-        log.save()
-        log.reload()
-        self.assertEqual(log.date, d1)
-
-        # Pre UTC microseconds above 1000 is wonky - with default datetimefields
-        # log.date has an invalid microsecond value so I can't construct
-        # a date to compare.
-        for i in range(1001, 3113, 33):
-            d1 = datetime.datetime(1969, 12, 31, 23, 59, 59, i)
-            log.date = d1
-            log.save()
-            log.reload()
-            self.assertEqual(log.date, d1)
-            log1 = LogEntry.objects.get(date=d1)
+        for query in (d1, d1.isoformat(' ')):
+            log1 = LogEntry.objects.get(date=query)
             self.assertEqual(log, log1)
 
-        # Test string padding
-        microsecond = map(int, [math.pow(10, x) for x in range(6)])
-        mm = dd = hh = ii = ss = [1, 10]
+        if dateutil:
+            log1 = LogEntry.objects.get(date=d1.isoformat('T'))
+            self.assertEqual(log, log1)
 
-        for values in itertools.product([2014], mm, dd, hh, ii, ss, microsecond):
-            stored = LogEntry(date=datetime.datetime(*values)).to_mongo()['date']
-            self.assertTrue(re.match('^\d{4},\d{2},\d{2},\d{2},\d{2},\d{2},\d{6}$', stored) is not None)
-
-        # Test separator
-        stored = LogEntry(date_with_dots=datetime.datetime(2014, 1, 1)).to_mongo()['date_with_dots']
-        self.assertTrue(re.match('^\d{4}.\d{2}.\d{2}.\d{2}.\d{2}.\d{2}.\d{6}$', stored) is not None)
-
-    def test_complexdatetime_usage(self):
-        """Tests for complex datetime fields - which can handle
-        microseconds without rounding.
-        """
-        class LogEntry(Document):
-            date = ComplexDateTimeField()
-
-        LogEntry.drop_collection()
-
-        d1 = datetime.datetime(1950, 1, 1, 0, 0, 1, 999)
-        log = LogEntry()
-        log.date = d1
-        log.save()
-
-        log1 = LogEntry.objects.get(date=d1)
-        self.assertEqual(log, log1)
-
-        # create extra 59 log entries for a total of 60
-        for i in range(1951, 2010):
-            d = datetime.datetime(i, 1, 1, 0, 0, 1, 999)
+        # create additional 19 log entries for a total of 20
+        for i in range(1971, 1990):
+            d = datetime.datetime(i, 1, 1, 0, 0, 1)
             LogEntry(date=d).save()
 
-        self.assertEqual(LogEntry.objects.count(), 60)
+        self.assertEqual(LogEntry.objects.count(), 20)
 
         # Test ordering
         logs = LogEntry.objects.order_by("date")
         i = 0
-        while i < 59:
+        while i < 19:
             self.assertTrue(logs[i].date <= logs[i + 1].date)
             i += 1
 
         logs = LogEntry.objects.order_by("-date")
         i = 0
-        while i < 59:
+        while i < 19:
             self.assertTrue(logs[i].date >= logs[i + 1].date)
             i += 1
 
         # Test searching
         logs = LogEntry.objects.filter(date__gte=datetime.datetime(1980, 1, 1))
-        self.assertEqual(logs.count(), 30)
-
-        logs = LogEntry.objects.filter(date__lte=datetime.datetime(1980, 1, 1))
-        self.assertEqual(logs.count(), 30)
-
-        logs = LogEntry.objects.filter(
-            date__lte=datetime.datetime(2011, 1, 1),
-            date__gte=datetime.datetime(2000, 1, 1),
-        )
         self.assertEqual(logs.count(), 10)
-
-        LogEntry.drop_collection()
-
-        # Test microsecond-level ordering/filtering
-        for microsecond in (99, 999, 9999, 10000):
-            LogEntry(
-                date=datetime.datetime(2015, 1, 1, 0, 0, 0, microsecond)
-            ).save()
-
-        logs = list(LogEntry.objects.order_by('date'))
-        for next_idx, log in enumerate(logs[:-1], start=1):
-            next_log = logs[next_idx]
-            self.assertTrue(log.date < next_log.date)
-
-        logs = list(LogEntry.objects.order_by('-date'))
-        for next_idx, log in enumerate(logs[:-1], start=1):
-            next_log = logs[next_idx]
-            self.assertTrue(log.date > next_log.date)
-
-        logs = LogEntry.objects.filter(
-            date__lte=datetime.datetime(2015, 1, 1, 0, 0, 0, 10000))
-        self.assertEqual(logs.count(), 4)
 
     def test_list_validation(self):
         """Ensure that a list field only accepts lists with valid elements."""
@@ -1595,8 +1612,8 @@ class FieldTest(MongoDBTestCase):
         e.save()
 
         e2 = Simple.objects.get(id=e.id)
-        self.assertTrue(isinstance(e2.mapping[0], StringSetting))
-        self.assertTrue(isinstance(e2.mapping[1], IntegerSetting))
+        self.assertIsInstance(e2.mapping[0], StringSetting)
+        self.assertIsInstance(e2.mapping[1], IntegerSetting)
 
         # Test querying
         self.assertEqual(
@@ -1765,8 +1782,8 @@ class FieldTest(MongoDBTestCase):
         e.save()
 
         e2 = Simple.objects.get(id=e.id)
-        self.assertTrue(isinstance(e2.mapping['somestring'], StringSetting))
-        self.assertTrue(isinstance(e2.mapping['someint'], IntegerSetting))
+        self.assertIsInstance(e2.mapping['somestring'], StringSetting)
+        self.assertIsInstance(e2.mapping['someint'], IntegerSetting)
 
         # Test querying
         self.assertEqual(
@@ -1850,8 +1867,8 @@ class FieldTest(MongoDBTestCase):
         e.save()
 
         e2 = Extensible.objects.get(id=e.id)
-        self.assertTrue(isinstance(e2.mapping['somestring'], StringSetting))
-        self.assertTrue(isinstance(e2.mapping['someint'], IntegerSetting))
+        self.assertIsInstance(e2.mapping['somestring'], StringSetting)
+        self.assertIsInstance(e2.mapping['someint'], IntegerSetting)
 
         with self.assertRaises(ValidationError):
             e.mapping['someint'] = 123
@@ -2005,6 +2022,15 @@ class FieldTest(MongoDBTestCase):
             ]))
         ]))
         self.assertEqual(a.b.c.txt, 'hi')
+
+    def test_embedded_document_field_cant_reference_using_a_str_if_it_does_not_exist_yet(self):
+        raise SkipTest("Using a string reference in an EmbeddedDocumentField does not work if the class isnt registerd yet")
+
+        class MyDoc2(Document):
+            emb = EmbeddedDocumentField('MyDoc')
+
+        class MyDoc(EmbeddedDocument):
+            name = StringField()
 
     def test_embedded_document_validation(self):
         """Ensure that invalid embedded documents cannot be assigned to
@@ -2547,7 +2573,7 @@ class FieldTest(MongoDBTestCase):
         bm = Bookmark.objects(bookmark_object=post_1).first()
 
         self.assertEqual(bm.bookmark_object, post_1)
-        self.assertTrue(isinstance(bm.bookmark_object, Post))
+        self.assertIsInstance(bm.bookmark_object, Post)
 
         bm.bookmark_object = link_1
         bm.save()
@@ -2555,7 +2581,7 @@ class FieldTest(MongoDBTestCase):
         bm = Bookmark.objects(bookmark_object=link_1).first()
 
         self.assertEqual(bm.bookmark_object, link_1)
-        self.assertTrue(isinstance(bm.bookmark_object, Link))
+        self.assertIsInstance(bm.bookmark_object, Link)
 
     def test_generic_reference_list(self):
         """Ensure that a ListField properly dereferences generic references.
@@ -2802,7 +2828,7 @@ class FieldTest(MongoDBTestCase):
         doc1 = Doc.objects.create()
         doc2 = Doc.objects.create(ref=doc1)
 
-        self.assertTrue(isinstance(doc1.pk, ObjectId))
+        self.assertIsInstance(doc1.pk, ObjectId)
 
         doc = Doc.objects.get(ref=doc1.pk)
         self.assertEqual(doc, doc2)
@@ -3405,13 +3431,13 @@ class FieldTest(MongoDBTestCase):
         person.save()
 
         person = Person.objects.first()
-        self.assertTrue(isinstance(person.like, Car))
+        self.assertIsInstance(person.like, Car)
 
         person.like = Dish(food="arroz", number=15)
         person.save()
 
         person = Person.objects.first()
-        self.assertTrue(isinstance(person.like, Dish))
+        self.assertIsInstance(person.like, Dish)
 
     def test_generic_embedded_document_choices(self):
         """Ensure you can limit GenericEmbeddedDocument choices."""
@@ -3436,7 +3462,7 @@ class FieldTest(MongoDBTestCase):
         person.save()
 
         person = Person.objects.first()
-        self.assertTrue(isinstance(person.like, Dish))
+        self.assertIsInstance(person.like, Dish)
 
     def test_generic_list_embedded_document_choices(self):
         """Ensure you can limit GenericEmbeddedDocument choices inside
@@ -3463,7 +3489,7 @@ class FieldTest(MongoDBTestCase):
         person.save()
 
         person = Person.objects.first()
-        self.assertTrue(isinstance(person.likes[0], Dish))
+        self.assertIsInstance(person.likes[0], Dish)
 
     def test_recursive_validation(self):
         """Ensure that a validation result to_dict is available."""
@@ -3489,18 +3515,17 @@ class FieldTest(MongoDBTestCase):
         except ValidationError as error:
             # ValidationError.errors property
             self.assertTrue(hasattr(error, 'errors'))
-            self.assertTrue(isinstance(error.errors, dict))
-            self.assertTrue('comments' in error.errors)
-            self.assertTrue(1 in error.errors['comments'])
-            self.assertTrue(isinstance(error.errors['comments'][1]['content'],
-                                       ValidationError))
+            self.assertIsInstance(error.errors, dict)
+            self.assertIn('comments', error.errors)
+            self.assertIn(1, error.errors['comments'])
+            self.assertIsInstance(error.errors['comments'][1]['content'], ValidationError)
 
             # ValidationError.schema property
             error_dict = error.to_dict()
-            self.assertTrue(isinstance(error_dict, dict))
-            self.assertTrue('comments' in error_dict)
-            self.assertTrue(1 in error_dict['comments'])
-            self.assertTrue('content' in error_dict['comments'][1])
+            self.assertIsInstance(error_dict, dict)
+            self.assertIn('comments', error_dict)
+            self.assertIn(1, error_dict['comments'])
+            self.assertIn('content', error_dict['comments'][1])
             self.assertEqual(error_dict['comments'][1]['content'],
                              u'Field is required')
 
@@ -3616,7 +3641,7 @@ class FieldTest(MongoDBTestCase):
 
         # Passes regex validation
         user = User(email='me@example.com')
-        self.assertTrue(user.validate() is None)
+        self.assertIsNone(user.validate())
 
     def test_tuples_as_tuples(self):
         """Ensure that tuples remain tuples when they are inside
@@ -3643,10 +3668,10 @@ class FieldTest(MongoDBTestCase):
         doc.items = tuples
         doc.save()
         x = TestDoc.objects().get()
-        self.assertTrue(x is not None)
-        self.assertTrue(len(x.items) == 1)
-        self.assertTrue(tuple(x.items[0]) in tuples)
-        self.assertTrue(x.items[0] in tuples)
+        self.assertIsNotNone(x)
+        self.assertEqual(len(x.items), 1)
+        self.assertIn(tuple(x.items[0]), tuples)
+        self.assertIn(x.items[0], tuples)
 
     def test_dynamic_fields_class(self):
         class Doc2(Document):
@@ -3718,7 +3743,7 @@ class FieldTest(MongoDBTestCase):
         assert isinstance(doc.field, ToEmbedChild)
         assert doc.field == to_embed_child
 
-    def test_invalid_dict_value(self):
+    def test_dict_field_invalid_dict_value(self):
         class DictFieldTest(Document):
             dictionary = DictField(required=True)
 
@@ -3731,6 +3756,22 @@ class FieldTest(MongoDBTestCase):
         test = DictFieldTest(dictionary=False)
         test.dictionary  # Just access to test getter
         self.assertRaises(ValidationError, test.validate)
+
+    def test_dict_field_raises_validation_error_if_wrongly_assign_embedded_doc(self):
+        class DictFieldTest(Document):
+            dictionary = DictField(required=True)
+
+        DictFieldTest.drop_collection()
+
+        class Embedded(EmbeddedDocument):
+            name = StringField()
+
+        embed = Embedded(name='garbage')
+        doc = DictFieldTest(dictionary=embed)
+        with self.assertRaises(ValidationError) as ctx_err:
+            doc.validate()
+        self.assertIn("'dictionary'", str(ctx_err.exception))
+        self.assertIn('Only dictionaries may be used in a DictField', str(ctx_err.exception))
 
     def test_cls_field(self):
         class Animal(Document):
@@ -3796,8 +3837,8 @@ class FieldTest(MongoDBTestCase):
 
         doc = TestLongFieldConsideredAsInt64(some_long=42).save()
         db = get_db()
-        self.assertTrue(isinstance(db.test_long_field_considered_as_int64.find()[0]['some_long'], Int64))
-        self.assertTrue(isinstance(doc.some_long, six.integer_types))
+        self.assertIsInstance(db.test_long_field_considered_as_int64.find()[0]['some_long'], Int64)
+        self.assertIsInstance(doc.some_long, six.integer_types)
 
 
 class EmbeddedDocumentListFieldTestCase(MongoDBTestCase):
@@ -3829,6 +3870,28 @@ class EmbeddedDocumentListFieldTestCase(MongoDBTestCase):
             self.Comments(author='user2', message='message3'),
             self.Comments(author='user3', message='message1')
         ]).save()
+
+    def test_fails_upon_validate_if_provide_a_doc_instead_of_a_list_of_doc(self):
+        # Relates to Issue #1464
+        comment = self.Comments(author='John')
+
+        class Title(Document):
+            content = StringField()
+
+        # Test with an embeddedDocument instead of a list(embeddedDocument)
+        # It's an edge case but it used to fail with a vague error, making it difficult to troubleshoot it
+        post = self.BlogPost(comments=comment)
+        with self.assertRaises(ValidationError) as ctx_err:
+            post.validate()
+        self.assertIn("'comments'", str(ctx_err.exception))
+        self.assertIn('Only lists and tuples may be used in a list field', str(ctx_err.exception))
+
+        # Test with a Document
+        post = self.BlogPost(comments=Title(content='garbage'))
+        with self.assertRaises(ValidationError) as e:
+            post.validate()
+        self.assertIn("'comments'", str(ctx_err.exception))
+        self.assertIn('Only lists and tuples may be used in a list field', str(ctx_err.exception))
 
     def test_no_keyword_filter(self):
         """
@@ -4247,6 +4310,44 @@ class EmbeddedDocumentListFieldTestCase(MongoDBTestCase):
         self.assertEqual(custom_data['a'], CustomData.c_field.custom_data['a'])
 
 
+class TestEmbeddedDocumentField(MongoDBTestCase):
+    def test___init___(self):
+        class MyDoc(EmbeddedDocument):
+            name = StringField()
+
+        field = EmbeddedDocumentField(MyDoc)
+        self.assertEqual(field.document_type_obj, MyDoc)
+
+        field2 = EmbeddedDocumentField('MyDoc')
+        self.assertEqual(field2.document_type_obj, 'MyDoc')
+
+    def test___init___throw_error_if_document_type_is_not_EmbeddedDocument(self):
+        with self.assertRaises(ValidationError):
+            EmbeddedDocumentField(dict)
+
+    def test_document_type_throw_error_if_not_EmbeddedDocument_subclass(self):
+
+        class MyDoc(Document):
+            name = StringField()
+
+        emb = EmbeddedDocumentField('MyDoc')
+        with self.assertRaises(ValidationError) as ctx:
+            emb.document_type
+        self.assertIn('Invalid embedded document class provided to an EmbeddedDocumentField', str(ctx.exception))
+
+    def test_embedded_document_field_only_allow_subclasses_of_embedded_document(self):
+        # Relates to #1661
+        class MyDoc(Document):
+            name = StringField()
+
+        with self.assertRaises(ValidationError):
+            class MyFailingDoc(Document):
+                emb = EmbeddedDocumentField(MyDoc)
+
+        with self.assertRaises(ValidationError):
+            class MyFailingdoc2(Document):
+                emb = EmbeddedDocumentField('MyDoc')
+
 class CachedReferenceFieldTest(MongoDBTestCase):
 
     def test_cached_reference_field_get_and_save(self):
@@ -4310,7 +4411,7 @@ class CachedReferenceFieldTest(MongoDBTestCase):
 
         ocorrence = Ocorrence.objects(animal__tag='heavy').first()
         self.assertEqual(ocorrence.person, "teste")
-        self.assertTrue(isinstance(ocorrence.animal, Animal))
+        self.assertIsInstance(ocorrence.animal, Animal)
 
     def test_cached_reference_field_decimal(self):
         class PersonAuto(Document):
@@ -4627,7 +4728,7 @@ class CachedReferenceFieldTest(MongoDBTestCase):
             animal__tag='heavy',
             animal__owner__tp='u').first()
         self.assertEqual(ocorrence.person, "teste")
-        self.assertTrue(isinstance(ocorrence.animal, Animal))
+        self.assertIsInstance(ocorrence.animal, Animal)
 
     def test_cached_reference_embedded_list_fields(self):
         class Owner(EmbeddedDocument):
@@ -4681,7 +4782,7 @@ class CachedReferenceFieldTest(MongoDBTestCase):
             animal__tag='heavy',
             animal__owner__tags='cool').first()
         self.assertEqual(ocorrence.person, "teste 2")
-        self.assertTrue(isinstance(ocorrence.animal, Animal))
+        self.assertIsInstance(ocorrence.animal, Animal)
 
 
 class LazyReferenceFieldTest(MongoDBTestCase):
@@ -5199,6 +5300,181 @@ class GenericLazyReferenceFieldTest(MongoDBTestCase):
         occ.in_embedded.direct = animal1_ref
         occ.in_embedded.in_list = [animal1_ref, animal2_ref]
         check_fields_type(occ)
+
+
+class ComplexDateTimeFieldTest(MongoDBTestCase):
+    def test_complexdatetime_storage(self):
+        """Tests for complex datetime fields - which can handle
+        microseconds without rounding.
+        """
+        class LogEntry(Document):
+            date = ComplexDateTimeField()
+            date_with_dots = ComplexDateTimeField(separator='.')
+
+        LogEntry.drop_collection()
+
+        # Post UTC - microseconds are rounded (down) nearest millisecond and
+        # dropped - with default datetimefields
+        d1 = datetime.datetime(1970, 1, 1, 0, 0, 1, 999)
+        log = LogEntry()
+        log.date = d1
+        log.save()
+        log.reload()
+        self.assertEqual(log.date, d1)
+
+        # Post UTC - microseconds are rounded (down) nearest millisecond - with
+        # default datetimefields
+        d1 = datetime.datetime(1970, 1, 1, 0, 0, 1, 9999)
+        log.date = d1
+        log.save()
+        log.reload()
+        self.assertEqual(log.date, d1)
+
+        # Pre UTC dates microseconds below 1000 are dropped - with default
+        # datetimefields
+        d1 = datetime.datetime(1969, 12, 31, 23, 59, 59, 999)
+        log.date = d1
+        log.save()
+        log.reload()
+        self.assertEqual(log.date, d1)
+
+        # Pre UTC microseconds above 1000 is wonky - with default datetimefields
+        # log.date has an invalid microsecond value so I can't construct
+        # a date to compare.
+        for i in range(1001, 3113, 33):
+            d1 = datetime.datetime(1969, 12, 31, 23, 59, 59, i)
+            log.date = d1
+            log.save()
+            log.reload()
+            self.assertEqual(log.date, d1)
+            log1 = LogEntry.objects.get(date=d1)
+            self.assertEqual(log, log1)
+
+        # Test string padding
+        microsecond = map(int, [math.pow(10, x) for x in range(6)])
+        mm = dd = hh = ii = ss = [1, 10]
+
+        for values in itertools.product([2014], mm, dd, hh, ii, ss, microsecond):
+            stored = LogEntry(date=datetime.datetime(*values)).to_mongo()['date']
+            self.assertTrue(re.match('^\d{4},\d{2},\d{2},\d{2},\d{2},\d{2},\d{6}$', stored) is not None)
+
+        # Test separator
+        stored = LogEntry(date_with_dots=datetime.datetime(2014, 1, 1)).to_mongo()['date_with_dots']
+        self.assertTrue(re.match('^\d{4}.\d{2}.\d{2}.\d{2}.\d{2}.\d{2}.\d{6}$', stored) is not None)
+
+    def test_complexdatetime_usage(self):
+        """Tests for complex datetime fields - which can handle
+        microseconds without rounding.
+        """
+        class LogEntry(Document):
+            date = ComplexDateTimeField()
+
+        LogEntry.drop_collection()
+
+        d1 = datetime.datetime(1950, 1, 1, 0, 0, 1, 999)
+        log = LogEntry()
+        log.date = d1
+        log.save()
+
+        log1 = LogEntry.objects.get(date=d1)
+        self.assertEqual(log, log1)
+
+        # create extra 59 log entries for a total of 60
+        for i in range(1951, 2010):
+            d = datetime.datetime(i, 1, 1, 0, 0, 1, 999)
+            LogEntry(date=d).save()
+
+        self.assertEqual(LogEntry.objects.count(), 60)
+
+        # Test ordering
+        logs = LogEntry.objects.order_by("date")
+        i = 0
+        while i < 59:
+            self.assertTrue(logs[i].date <= logs[i + 1].date)
+            i += 1
+
+        logs = LogEntry.objects.order_by("-date")
+        i = 0
+        while i < 59:
+            self.assertTrue(logs[i].date >= logs[i + 1].date)
+            i += 1
+
+        # Test searching
+        logs = LogEntry.objects.filter(date__gte=datetime.datetime(1980, 1, 1))
+        self.assertEqual(logs.count(), 30)
+
+        logs = LogEntry.objects.filter(date__lte=datetime.datetime(1980, 1, 1))
+        self.assertEqual(logs.count(), 30)
+
+        logs = LogEntry.objects.filter(
+            date__lte=datetime.datetime(2011, 1, 1),
+            date__gte=datetime.datetime(2000, 1, 1),
+        )
+        self.assertEqual(logs.count(), 10)
+
+        LogEntry.drop_collection()
+
+        # Test microsecond-level ordering/filtering
+        for microsecond in (99, 999, 9999, 10000):
+            LogEntry(
+                date=datetime.datetime(2015, 1, 1, 0, 0, 0, microsecond)
+            ).save()
+
+        logs = list(LogEntry.objects.order_by('date'))
+        for next_idx, log in enumerate(logs[:-1], start=1):
+            next_log = logs[next_idx]
+            self.assertTrue(log.date < next_log.date)
+
+        logs = list(LogEntry.objects.order_by('-date'))
+        for next_idx, log in enumerate(logs[:-1], start=1):
+            next_log = logs[next_idx]
+            self.assertTrue(log.date > next_log.date)
+
+        logs = LogEntry.objects.filter(
+            date__lte=datetime.datetime(2015, 1, 1, 0, 0, 0, 10000))
+        self.assertEqual(logs.count(), 4)
+
+    def test_no_default_value(self):
+        class Log(Document):
+            timestamp = ComplexDateTimeField()
+
+        Log.drop_collection()
+
+        log = Log()
+        self.assertIsNone(log.timestamp)
+        log.save()
+
+        fetched_log = Log.objects.with_id(log.id)
+        self.assertIsNone(fetched_log.timestamp)
+
+    def test_default_static_value(self):
+        NOW = datetime.datetime.utcnow()
+        class Log(Document):
+            timestamp = ComplexDateTimeField(default=NOW)
+
+        Log.drop_collection()
+
+        log = Log()
+        self.assertEqual(log.timestamp, NOW)
+        log.save()
+
+        fetched_log = Log.objects.with_id(log.id)
+        self.assertEqual(fetched_log.timestamp, NOW)
+
+    def test_default_callable(self):
+        NOW = datetime.datetime.utcnow()
+
+        class Log(Document):
+            timestamp = ComplexDateTimeField(default=datetime.datetime.utcnow)
+
+        Log.drop_collection()
+
+        log = Log()
+        self.assertGreaterEqual(log.timestamp, NOW)
+        log.save()
+
+        fetched_log = Log.objects.with_id(log.id)
+        self.assertGreaterEqual(fetched_log.timestamp, NOW)
 
 
 if __name__ == '__main__':

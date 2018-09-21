@@ -2,8 +2,17 @@
 Changelog
 =========
 
-dev
-===
+Development
+===========
+- QuerySet limit function behaviour: Passing 0 as parameter will return all the documents in the cursor #1611
+- (Fill this out as you fix issues and develop your features).
+=======
+Changes in 0.15.4
+=================
+- Added `DateField` #513
+
+Changes in 0.15.3
+=================
 -  Subfield resolve error in generic_emdedded_document query #1651 #1652
 -  use each modifier only with $position #1673 #1675
 -  Improve LazyReferenceField and GenericLazyReferenceField with nested fields #1704

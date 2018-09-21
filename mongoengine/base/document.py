@@ -100,13 +100,11 @@ class BaseDocument(object):
             for key, value in values.iteritems():
                 if key in self._fields or key == '_id':
                     setattr(self, key, value)
-                elif self._dynamic:
+                else:
                     dynamic_data[key] = value
         else:
             FileField = _import_class('FileField')
             for key, value in values.iteritems():
-                if key == '__auto_convert':
-                    continue
                 key = self._reverse_db_field_map.get(key, key)
                 if key in self._fields or key in ('id', 'pk', '_cls'):
                     if __auto_convert and value is not None:
@@ -304,7 +302,7 @@ class BaseDocument(object):
         data['_cls'] = self._class_name
 
         # only root fields ['test1.a', 'test2'] => ['test1', 'test2']
-        root_fields = set([f.split('.')[0] for f in fields])
+        root_fields = {f.split('.')[0] for f in fields}
 
         for field_name in self:
             if root_fields and field_name not in root_fields:
@@ -406,7 +404,15 @@ class BaseDocument(object):
 
     @classmethod
     def from_json(cls, json_data, created=False):
-        """Converts json data to an unsaved document instance"""
+        """Converts json data to a Document instance
+
+        :param json_data: The json data to load into the Document
+        :param created: If True, the document will be considered as a brand new document
+                        If False and an id is provided, it will consider that the data being
+                        loaded corresponds to what's already in the database (This has an impact of subsequent call to .save())
+                        If False and no id is provided, it will consider the data as a new document
+                        (default ``False``)
+        """
         return cls._from_son(json_util.loads(json_data), created=created)
 
     def __expand_dynamic_values(self, name, value):
@@ -561,7 +567,7 @@ class BaseDocument(object):
                     continue
                 elif isinstance(field, SortedListField) and field._ordering:
                     # if ordering is affected whole list is changed
-                    if any(map(lambda d: field._ordering in d._changed_fields, data)):
+                    if any(field._ordering in d._changed_fields for d in data):
                         changed_fields.append(db_field_name)
                         continue
 
@@ -694,7 +700,7 @@ class BaseDocument(object):
 
         fields = cls._fields
         if not _auto_dereference:
-            fields = copy.copy(fields)
+            fields = copy.deepcopy(fields)
 
         for field_name, field in fields.iteritems():
             field._auto_dereference = _auto_dereference
@@ -1085,6 +1091,6 @@ class BaseDocument(object):
             sep = getattr(field, 'display_sep', ' ')
             values = value if field.__class__.__name__ in ('ListField', 'SortedListField') else [value]
             return sep.join([
-                dict(field.choices).get(val, val)
+                six.text_type(dict(field.choices).get(val, val))
                 for val in values or []])
         return value

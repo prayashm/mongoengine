@@ -513,6 +513,9 @@ If a dictionary is passed then the following options are available:
     Allows you to automatically expire data from a collection by setting the
     time in seconds to expire the a field.
 
+:attr:`name` (Optional)
+    Allows you to specify a name for the index
+
 .. note::
 
     Inheritance adds extra fields indices see: :ref:`document-inheritance`.
@@ -526,7 +529,7 @@ There are a few top level defaults for all indexes that can be set::
         title = StringField()
         rating = StringField()
         meta = {
-            'index_options': {},
+            'index_opts': {},
             'index_background': True,
             'index_cls': False,
             'auto_create_index': True,
@@ -534,7 +537,7 @@ There are a few top level defaults for all indexes that can be set::
         }
 
 
-:attr:`index_options` (Optional)
+:attr:`index_opts` (Optional)
     Set any default index options - see the `full options list <http://docs.mongodb.org/manual/reference/method/db.collection.ensureIndex/#db.collection.ensureIndex>`_
 
 :attr:`index_background` (Optional)
@@ -733,6 +736,9 @@ document.::
 
 .. note:: From 0.8 onwards :attr:`allow_inheritance` defaults
           to False, meaning you must set it to True to use inheritance.
+          
+          Setting :attr:`allow_inheritance` to True should also be used in
+          :class:`~mongoengine.EmbeddedDocument` class in case you need to subclass it
 
 Working with existing data
 --------------------------

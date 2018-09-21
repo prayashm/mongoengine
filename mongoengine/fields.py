@@ -5,7 +5,6 @@ import re
 import socket
 import time
 import uuid
-import warnings
 from operator import itemgetter
 
 from bson import Binary, DBRef, ObjectId, SON
@@ -25,9 +24,11 @@ try:
 except ImportError:
     Int64 = long
 
+
 from mongoengine.base import (BaseDocument, BaseField, ComplexBaseField,
                               GeoJsonBaseField, LazyReference, ObjectIdField,
                               get_document)
+from mongoengine.base.utils import LazyRegexCompiler
 from mongoengine.common import _import_class
 from mongoengine.connection import DEFAULT_CONNECTION_NAME, get_db
 from mongoengine.document import Document, EmbeddedDocument
@@ -41,9 +42,15 @@ except ImportError:
     Image = None
     ImageOps = None
 
+if six.PY3:
+    # Useless as long as 2to3 gets executed
+    # as it turns `long` into `int` blindly
+    long = int
+
+
 __all__ = (
     'StringField', 'URLField', 'EmailField', 'IntField', 'LongField',
-    'FloatField', 'DecimalField', 'BooleanField', 'DateTimeField',
+    'FloatField', 'DecimalField', 'BooleanField', 'DateTimeField', 'DateField',
     'ComplexDateTimeField', 'EmbeddedDocumentField', 'ObjectIdField',
     'GenericEmbeddedDocumentField', 'DynamicField', 'ListField',
     'SortedListField', 'EmbeddedDocumentListField', 'DictField',
@@ -123,9 +130,9 @@ class URLField(StringField):
     .. versionadded:: 0.3
     """
 
-    _URL_REGEX = re.compile(
+    _URL_REGEX = LazyRegexCompiler(
         r'^(?:[a-z0-9\.\-]*)://'  # scheme is validated separately
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}(?<!-)\.?)|'  # domain...
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-_]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}(?<!-)\.?)|'  # domain...
         r'localhost|'  # localhost...
         r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|'  # ...or ipv4
         r'\[?[A-F0-9]*:[A-F0-9:]+\]?)'  # ...or ipv6
@@ -157,7 +164,7 @@ class EmailField(StringField):
 
     .. versionadded:: 0.4
     """
-    USER_REGEX = re.compile(
+    USER_REGEX = LazyRegexCompiler(
         # `dot-atom` defined in RFC 5322 Section 3.2.3.
         r"(^[-!#$%&'*+/=?^_`{}|~0-9A-Z]+(\.[-!#$%&'*+/=?^_`{}|~0-9A-Z]+)*\Z"
         # `quoted-string` defined in RFC 5322 Section 3.2.4.
@@ -165,7 +172,7 @@ class EmailField(StringField):
         re.IGNORECASE
     )
 
-    UTF8_USER_REGEX = re.compile(
+    UTF8_USER_REGEX = LazyRegexCompiler(
         six.u(
             # RFC 6531 Section 3.3 extends `atext` (used by dot-atom) to
             # include `UTF8-non-ascii`.
@@ -175,7 +182,7 @@ class EmailField(StringField):
         ), re.IGNORECASE | re.UNICODE
     )
 
-    DOMAIN_REGEX = re.compile(
+    DOMAIN_REGEX = LazyRegexCompiler(
         r'((?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+)(?:[A-Z0-9-]{2,63}(?<!-))\Z',
         re.IGNORECASE
     )
@@ -364,7 +371,8 @@ class FloatField(BaseField):
 
 
 class DecimalField(BaseField):
-    """Fixed-point decimal number field.
+    """Fixed-point decimal number field. Stores the value as a float by default unless `force_string` is used.
+    If using floats, beware of Decimal to float conversion (potential precision loss)
 
     .. versionchanged:: 0.8
     .. versionadded:: 0.3
@@ -375,7 +383,9 @@ class DecimalField(BaseField):
         """
         :param min_value: Validation rule for the minimum acceptable value.
         :param max_value: Validation rule for the maximum acceptable value.
-        :param force_string: Store as a string.
+        :param force_string: Store the value as a string (instead of a float).
+         Be aware that this affects query sorting and operation like lte, gte (as string comparison is applied)
+         and some query operator won't work (e.g: inc, dec)
         :param precision: Number of decimal places to store.
         :param rounding: The rounding rule from the python decimal library:
 
@@ -462,6 +472,8 @@ class DateTimeField(BaseField):
     installed you can utilise it to convert varying types of date formats into valid
     python datetime objects.
 
+    Note: To default the field to the current datetime, use: DateTimeField(default=datetime.utcnow)
+
     Note: Microseconds are rounded to the nearest millisecond.
       Pre UTC microsecond support is effectively broken.
       Use :class:`~mongoengine.fields.ComplexDateTimeField` if you
@@ -525,6 +537,22 @@ class DateTimeField(BaseField):
         return super(DateTimeField, self).prepare_query_value(op, self.to_mongo(value))
 
 
+class DateField(DateTimeField):
+    def to_mongo(self, value):
+        value = super(DateField, self).to_mongo(value)
+        # drop hours, minutes, seconds
+        if isinstance(value, datetime.datetime):
+            value = datetime.datetime(value.year, value.month, value.day)
+        return value
+
+    def to_python(self, value):
+        value = super(DateField, self).to_python(value)
+        # convert datetime to date
+        if isinstance(value, datetime.datetime):
+            value = datetime.date(value.year, value.month, value.day)
+        return value
+
+
 class ComplexDateTimeField(StringField):
     """
     ComplexDateTimeField handles microseconds exactly instead of rounding
@@ -541,11 +569,15 @@ class ComplexDateTimeField(StringField):
     The `,` as the separator can be easily modified by passing the `separator`
     keyword when initializing the field.
 
+    Note: To default the field to the current datetime, use: DateTimeField(default=datetime.utcnow)
+
     .. versionadded:: 0.5
     """
 
     def __init__(self, separator=',', **kwargs):
-        self.names = ['year', 'month', 'day', 'hour', 'minute', 'second', 'microsecond']
+        """
+        :param separator: Allows to customize the separator used for storage (default ``,``)
+        """
         self.separator = separator
         self.format = separator.join(['%Y', '%m', '%d', '%H', '%M', '%S', '%f'])
         super(ComplexDateTimeField, self).__init__(**kwargs)
@@ -572,20 +604,24 @@ class ComplexDateTimeField(StringField):
         >>> ComplexDateTimeField()._convert_from_string(a)
         datetime.datetime(2011, 6, 8, 20, 26, 24, 92284)
         """
-        values = map(int, data.split(self.separator))
+        values = [int(d) for d in data.split(self.separator)]
         return datetime.datetime(*values)
 
     def __get__(self, instance, owner):
+        if instance is None:
+            return self
+
         data = super(ComplexDateTimeField, self).__get__(instance, owner)
-        if data is None:
-            return None if self.null else datetime.datetime.now()
-        if isinstance(data, datetime.datetime):
+
+        if isinstance(data, datetime.datetime) or data is None:
             return data
         return self._convert_from_string(data)
 
     def __set__(self, instance, value):
-        value = self._convert_from_datetime(value) if value else value
-        return super(ComplexDateTimeField, self).__set__(instance, value)
+        super(ComplexDateTimeField, self).__set__(instance, value)
+        value = instance._data[self.name]
+        if value is not None:
+            instance._data[self.name] = self._convert_from_datetime(value)
 
     def validate(self, value):
         value = self.to_python(value)
@@ -629,9 +665,17 @@ class EmbeddedDocumentField(BaseField):
     def document_type(self):
         if isinstance(self.document_type_obj, six.string_types):
             if self.document_type_obj == RECURSIVE_REFERENCE_CONSTANT:
-                self.document_type_obj = self.owner_document
+                resolved_document_type = self.owner_document
             else:
-                self.document_type_obj = get_document(self.document_type_obj)
+                resolved_document_type = get_document(self.document_type_obj)
+
+            if not issubclass(resolved_document_type, EmbeddedDocument):
+                # Due to the late resolution of the document_type
+                # There is a chance that it won't be an EmbeddedDocument (#1661)
+                self.error('Invalid embedded document class provided to an '
+                           'EmbeddedDocumentField')
+            self.document_type_obj = resolved_document_type
+
         return self.document_type_obj
 
     def to_python(self, value):
@@ -916,14 +960,9 @@ class DictField(ComplexBaseField):
     .. versionchanged:: 0.5 - Can now handle complex / varying types of data
     """
 
-    def __init__(self, basecls=None, field=None, *args, **kwargs):
+    def __init__(self, field=None, *args, **kwargs):
         self.field = field
         self._auto_dereference = False
-        self.basecls = basecls or BaseField
-
-        # XXX ValidationError raised outside of the "validate" method.
-        if not issubclass(self.basecls, BaseField):
-            self.error('DictField only accepts dict values')
 
         kwargs.setdefault('default', lambda: {})
         super(DictField, self).__init__(*args, **kwargs)
@@ -943,7 +982,7 @@ class DictField(ComplexBaseField):
         super(DictField, self).validate(value)
 
     def lookup_member(self, member_name):
-        return DictField(basecls=self.basecls, db_field=member_name)
+        return DictField(db_field=member_name)
 
     def prepare_query_value(self, op, value):
         match_operators = ['contains', 'icontains', 'startswith',
@@ -1011,11 +1050,13 @@ class ReferenceField(BaseField):
 
     .. code-block:: python
 
-        class Bar(Document):
-            content = StringField()
-            foo = ReferenceField('Foo')
+        class Org(Document):
+            owner = ReferenceField('User')
 
-        Foo.register_delete_rule(Bar, 'foo', NULLIFY)
+        class User(Document):
+            org = ReferenceField('Org', reverse_delete_rule=CASCADE)
+
+        User.register_delete_rule(Org, 'owner', DENY)
 
     .. versionchanged:: 0.5 added `reverse_delete_rule`
     """
@@ -1063,9 +1104,9 @@ class ReferenceField(BaseField):
 
         # Get value from document instance if available
         value = instance._data.get(self.name)
-        self._auto_dereference = instance._fields[self.name]._auto_dereference
+        auto_dereference = instance._fields[self.name]._auto_dereference
         # Dereference DBRefs
-        if self._auto_dereference and isinstance(value, DBRef):
+        if auto_dereference and isinstance(value, DBRef):
             if hasattr(value, 'cls'):
                 # Dereference using the class type specified in the reference
                 cls = get_document(value.cls)
@@ -1142,8 +1183,7 @@ class ReferenceField(BaseField):
         ):
             self.error(
                 '%s is not an instance of abstract reference type %s' % (
-                    self.document_type._class_name
-                )
+                    value, self.document_type._class_name)
             )
 
     def lookup_member(self, member_name):
@@ -1227,6 +1267,7 @@ class CachedReferenceField(BaseField):
         # Get value from document instance if available
         value = instance._data.get(self.name)
         self._auto_dereference = instance._fields[self.name]._auto_dereference
+
         # Dereference DBRefs
         if self._auto_dereference and isinstance(value, DBRef):
             dereferenced = self.document_type._get_db().dereference(value)
@@ -1492,8 +1533,10 @@ class GridFSProxy(object):
     def __get__(self, instance, value):
         return self
 
-    def __nonzero__(self):
+    def __bool__(self):
         return bool(self.grid_id)
+
+    __nonzero__ = __bool__  # For Py2 support
 
     def __getstate__(self):
         self_dict = self.__dict__
@@ -1512,9 +1555,9 @@ class GridFSProxy(object):
         return '<%s: %s>' % (self.__class__.__name__, self.grid_id)
 
     def __str__(self):
-        name = getattr(
-            self.get(), 'filename', self.grid_id) if self.get() else '(no file)'
-        return '<%s: %s>' % (self.__class__.__name__, name)
+        gridout = self.get()
+        filename = getattr(gridout, 'filename') if gridout else '<no file>'
+        return '<%s: %s (%s)>' % (self.__class__.__name__, filename, self.grid_id)
 
     def __eq__(self, other):
         if isinstance(other, GridFSProxy):
